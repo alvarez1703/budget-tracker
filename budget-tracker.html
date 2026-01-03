@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Budget">
+  <meta name="theme-color" content="#84cc16">
+  <title>Weekly Budget Tracker</title>
+  
+  <!-- PWA Icons -->
+  <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%2384cc16' width='100' height='100' rx='20'/><text x='50' y='68' text-anchor='middle' font-size='50'>💰</text></svg>">
+  
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+    
+    html, body, #root {
+      height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+      background: #f9fafb;
+      overflow-x: hidden;
+    }
+    
+    body {
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
+      padding-left: env(safe-area-inset-left);
+      padding-right: env(safe-area-inset-right);
+    }
+
+    input[type="number"]::-webkit-inner-spin-button,
+    input[type="number"]::-webkit-outer-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+    
+    input[type="number"] {
+      -moz-appearance: textfield;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const CATEGORIES = [
+      { id: 'housing', name: 'Housing', color: '#84cc16', icon: '🏠' },
+      { id: 'food', name: 'Food', color: '#22c55e', icon: '🍔' },
+      { id: 'transport', name: 'Transport', color: '#eab308', icon: '🚗' },
+      { id: 'entertainment', name: 'Entertainment', color: '#f97316', icon: '🎬' },
+      { id: 'shopping', name: 'Shopping', color: '#ec4899', icon: '🛍️' },
+      { id: 'other', name: 'Other', color: '#8b5cf6', icon: '📦' },
+    ];
+
+    const STORAGE_KEY = 'budget-tracker-weeks';
+
+    const getWeekKey = (date) => {
+      const d = new Date(date);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+
+    const getPayWeekStart = (date) => {
+      const d = new Date(date);
+      const dayOfWeek = d.getDay();
+      const daysSinceFriday = (dayOfWeek + 2) % 7;
+      const weekStart = new Date(d);
+      weekStart.setDate(d.getDate() - daysSinceFriday);
+      weekStart.setHours(0, 0, 0, 0);
+      return weekStart;
+    };
+
+    const getPayWeekEnd = (weekStart) => {
+      const weekEnd = new Date(weekStart);
+      weekEnd.setDate(weekStart.getDate() + 6);
+      weekEnd.setHours(23, 59, 59, 999);
+      return weekEnd;
+    };
+
+    const getNextWeek = (weekStart) => {
+      const next = new Date(weekStart);
+      next.setDate(weekStart.getDate() + 7);
+      return next;
+    };
+
+    const getPrevWeek = (weekStart) => {
+      const prev = new Date(weekStart);
+      prev.setDate(weekStart.getDate() - 7);
+      return prev;
+    };
+
+    const formatDate = (date) => date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const formatDateFull = (date) => date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const formatDateShort = (date) => date.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' });
+    const formatTime = (date) => date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    const formatDateTime = (date) => date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+
+    function BudgetTracker() {
+      const [weeksData, setWeeksData] = useState({});
+      const [currentWeekStart, setCurrentWeekStart] = useState(getPayWeekStart(new Date()));
+      const [activeTab, setActiveTab] = useState('home');
+      const [showAddExpense, setShowAddExpense] = useState(false);
+      const [showWeekManager, setShowWeekManager] = useState(false);
+      const [expenseName, setExpenseName] = useState('');
+      const [expenseAmount, setExpenseAmount] = useState('');
+      const [selectedCategory, setSelectedCategory] = useState(CATEGORIES[0].id);
+      const [budgetInput, setBudgetInput] = useState('');
+      const [isLoading, setIsLoading] = useState(true);
+      const [currentTime, setCurrentTime] = useState(new Date());
+      const [lastSaved, setLastSaved] = useState(null);
+
+      useEffect(() => {
+        try {
+          const saved = localStorage.getItem(STORAGE_KEY);
+          if (saved) {
+            setWeeksData(JSON.parse(saved));
+          }
+        } catch (e) {
+          console.log('No saved data');
+        }
+        setIsLoading(false);
+      }, []);
+
+      useEffect(() => {
+        if (isLoading) return;
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(weeksData));
+          setLastSaved(new Date());
+        } catch (e) {
+          console.error('Save failed');
+        }
+      }, [weeksData, isLoading]);
+
+      useEffect(() => {
+        const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+        return () => clearInterval(timer);
+      }, []);
+
+      const todayWeekStart = getPayWeekStart(new Date());
+      const currentWeekKey = getWeekKey(currentWeekStart);
+      const currentWeekEnd = getPayWeekEnd(currentWeekStart);
+      const currentWeekData = weeksData[currentWeekKey] || { budget: null, expenses: [] };
+      
+      const isCurrentWeek = getWeekKey(todayWeekStart) === currentWeekKey;
+      const isFutureWeek = currentWeekStart > todayWeekStart;
+      const isPastWeek = currentWeekStart < todayWeekStart;
+
+      const totalSpent = currentWeekData.expenses.reduce((sum, e) => sum + e.amount, 0);
+      const remaining = currentWeekData.budget ? currentWeekData.budget - totalSpent : 0;
+      const percentRemaining = currentWeekData.budget > 0 ? (remaining / currentWeekData.budget) * 100 : 100;
+
+      const getFutureWeeks = () => {
+        return Object.keys(weeksData)
+          .map(key => {
+            const weekStart = new Date(key + 'T00:00:00');
+            return { key, start: weekStart, end: getPayWeekEnd(weekStart), ...weeksData[key] };
+          })
+          .filter(w => w.start > todayWeekStart && w.budget !== null)
+          .sort((a, b) => a.start - b.start);
+      };
+
+      const getAllWeeksWithData = () => Object.keys(weeksData).filter(k => weeksData[k].budget !== null || weeksData[k].expenses?.length > 0).length;
+      const getTotalExpensesCount = () => Object.values(weeksData).reduce((sum, w) => sum + (w.expenses?.length || 0), 0);
+
+      const getStatusColor = () => {
+        if (currentWeekData.budget === null) return '#84cc16';
+        if (remaining < 0 || percentRemaining <= 20) return '#ef4444';
+        if (percentRemaining <= 50) return '#eab308';
+        return '#84cc16';
+      };
+
+      const getStatusLabel = () => {
+        if (currentWeekData.budget === null) return 'No budget set';
+        if (remaining < 0) return 'Over budget!';
+        if (percentRemaining <= 20) return 'Budget critical!';
+        if (percentRemaining <= 50) return 'Halfway there';
+        return 'On track';
+      };
+
+      const categoryTotals = CATEGORIES.map(cat => ({
+        ...cat,
+        total: currentWeekData.expenses.filter(e => e.category === cat.id).reduce((sum, e) => sum + e.amount, 0),
+        percent: totalSpent > 0 ? Math.round((currentWeekData.expenses.filter(e => e.category === cat.id).reduce((sum, e) => sum + e.amount, 0) / totalSpent) * 100) : 0
+      })).filter(c => c.total > 0);
+
+      const updateWeekData = (weekKey, updates) => {
+        setWeeksData(prev => ({ ...prev, [weekKey]: { ...prev[weekKey], ...updates } }));
+      };
+
+      const handleSetBudget = () => {
+        const amount = parseFloat(budgetInput);
+        if (!isNaN(amount) && amount > 0) {
+          updateWeekData(currentWeekKey, { budget: amount, expenses: currentWeekData.expenses || [], budgetSetAt: new Date().toISOString() });
+          setBudgetInput('');
+        }
+      };
+
+      const handleAddExpense = () => {
+        const amount = parseFloat(expenseAmount);
+        if (!isNaN(amount) && amount > 0 && expenseName.trim()) {
+          const now = new Date();
+          updateWeekData(currentWeekKey, {
+            budget: currentWeekData.budget,
+            expenses: [...currentWeekData.expenses, { id: Date.now(), name: expenseName.trim(), amount, category: selectedCategory, createdAt: now.toISOString(), timestamp: now.getTime() }]
+          });
+          setExpenseName('');
+          setExpenseAmount('');
+          setShowAddExpense(false);
+        }
+      };
+
+      const handleDeleteExpense = (id) => {
+        updateWeekData(currentWeekKey, { budget: currentWeekData.budget, expenses: currentWeekData.expenses.filter(e => e.id !== id) });
+      };
+
+      const handleDeleteWeek = (weekKey) => {
+        setWeeksData(prev => { const n = { ...prev }; delete n[weekKey]; return n; });
+      };
+
+      const handleClearCurrentWeek = () => {
+        setWeeksData(prev => { const n = { ...prev }; delete n[currentWeekKey]; return n; });
+      };
+
+      const handleClearAllData = () => {
+        localStorage.removeItem(STORAGE_KEY);
+        setWeeksData({});
+        setLastSaved(null);
+        setShowWeekManager(false);
+      };
+
+      const navigateWeek = (dir) => setCurrentWeekStart(dir === 'next' ? getNextWeek(currentWeekStart) : getPrevWeek(currentWeekStart));
+      const goToToday = () => setCurrentWeekStart(getPayWeekStart(new Date()));
+
+      const getDayExpenses = () => {
+        const days = ['Fri', 'Sat', 'Sun', 'Mon', 'Tue', 'Wed', 'Thu'];
+        const dayTotals = Array(7).fill(0);
+        currentWeekData.expenses.forEach(e => {
+          const d = new Date(e.createdAt || e.date);
+          dayTotals[(d.getDay() + 2) % 7] += e.amount;
+        });
+        const max = Math.max(...dayTotals, 1);
+        const todayIdx = isCurrentWeek ? (new Date().getDay() + 2) % 7 : -1;
+        return days.map((name, i) => ({ name, total: dayTotals[i], height: (dayTotals[i] / max) * 100, isToday: i === todayIdx }));
+      };
+
+      const getWeekNumber = () => {
+        const start = new Date(currentWeekStart.getFullYear(), 0, 1);
+        return Math.ceil((Math.floor((currentWeekStart - start) / 86400000) + start.getDay() + 1) / 7);
+      };
+
+      const statusColor = getStatusColor();
+
+      if (isLoading) {
+        return (
+          <div style={styles.loadingContainer}>
+            <div style={styles.loadingSpinner}></div>
+            <p style={styles.loadingText}>Loading...</p>
+          </div>
+        );
+      }
+
+      if (currentWeekData.budget === null) {
+        return (
+          <div style={styles.setupContainer}>
+            <div style={styles.setupContent}>
+              <div style={styles.currentTimeDisplay}>
+                <span style={styles.currentTimeIcon}>🕐</span>
+                <span style={styles.currentTimeText}>{currentTime.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</span>
+                <span style={styles.currentTimeClock}>{formatTime(currentTime)}</span>
+              </div>
+
+              <div style={styles.weekNavSetup}>
+                <button onClick={() => navigateWeek('prev')} style={styles.navArrowBtn}>
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2"><path d="M15 18l-6-6 6-6"/></svg>
+                </button>
+                <div style={styles.weekNavCenter}>
+                  <span style={styles.weekNavLabel}>{isCurrentWeek ? 'This Week' : isFutureWeek ? 'Future Week' : 'Past Week'}</span>
+                  <span style={styles.weekNavDates}>{formatDateShort(currentWeekStart)} – {formatDateShort(currentWeekEnd)}</span>
+                </div>
+                <button onClick={() => navigateWeek('next')} style={styles.navArrowBtn}>
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2"><path d="M9 18l6-6-6-6"/></svg>
+                </button>
+              </div>
+
+              <div style={styles.setupIcon}>💰</div>
+              <h1 style={styles.setupTitle}>{isFutureWeek ? 'Plan Future Week' : 'Weekly Budget'}</h1>
+              <p style={styles.setupSubtitle}>{isFutureWeek ? 'Set a budget for this upcoming week' : 'Enter your spending limit for this week'}</p>
+              
+              <div style={styles.weekBadgeSetup}>
+                <span>📅</span>
+                <span>{formatDate(currentWeekStart)} – {formatDate(currentWeekEnd)}, {currentWeekStart.getFullYear()}</span>
+              </div>
+              
+              <div style={styles.inputWrapper}>
+                <span style={styles.dollarSign}>$</span>
+                <input type="number" value={budgetInput} onChange={(e) => setBudgetInput(e.target.value)} placeholder="0.00" style={styles.budgetInput} />
+              </div>
+              
+              <button onClick={handleSetBudget} style={styles.startButton}>{isFutureWeek ? 'Set Future Budget' : 'Start Tracking'}</button>
+              <p style={styles.payDayNote}>💰 Pay week runs Friday to Thursday</p>
+
+              {!isCurrentWeek && <button onClick={goToToday} style={styles.goTodayBtnSetup}>← Back to Current Week</button>}
+
+              {getAllWeeksWithData() > 0 && (
+                <div style={styles.dataStats}>
+                  <span>💾 {getAllWeeksWithData()} week{getAllWeeksWithData() !== 1 ? 's' : ''} saved</span>
+                  <span>•</span>
+                  <span>{getTotalExpensesCount()} transaction{getTotalExpensesCount() !== 1 ? 's' : ''}</span>
+                </div>
+              )}
+
+              {getFutureWeeks().length > 0 && (
+                <div style={styles.futureWeeksSection}>
+                  <h3 style={styles.futureWeeksTitle}>Planned Future Weeks</h3>
+                  {getFutureWeeks().map(week => (
+                    <div key={week.key} style={styles.futureWeekItem}>
+                      <div style={styles.futureWeekInfo}>
+                        <span style={styles.futureWeekDates}>{formatDateShort(week.start)} – {formatDateShort(week.end)}</span>
+                        <span style={styles.futureWeekBudget}>${week.budget.toFixed(2)}</span>
+                      </div>
+                      <button onClick={() => handleDeleteWeek(week.key)} style={styles.deleteWeekBtn}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div style={styles.container}>
+          <div style={styles.header}>
+            <div>
+              <p style={{...styles.headerLabel, color: isFutureWeek ? '#8b5cf6' : isPastWeek ? '#6b7280' : '#84cc16'}}>
+                {isFutureWeek ? '🔮 Future' : isPastWeek ? '📜 Past' : '📍 Current'} • Week {getWeekNumber()}
+              </p>
+              <h1 style={styles.headerTitle}>My Budget</h1>
+            </div>
+            <div style={styles.headerRight}>
+              <div style={styles.liveTime}><span style={styles.liveTimeClock}>{formatTime(currentTime)}</span></div>
+              <button onClick={() => setShowWeekManager(true)} style={styles.settingsBtn}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <div style={styles.weekBanner}>
+            <button onClick={() => navigateWeek('prev')} style={styles.weekNavBtn}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+            <div style={styles.weekBannerCenter}>
+              <span style={styles.weekBannerText}>{formatDateFull(currentWeekStart)} — {formatDateFull(currentWeekEnd)}</span>
+              {!isCurrentWeek && <button onClick={goToToday} style={styles.goTodayBtn}>Go to Today</button>}
+            </div>
+            <button onClick={() => navigateWeek('next')} style={styles.weekNavBtn}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6"/></svg>
+            </button>
+          </div>
+
+          {lastSaved && <div style={styles.saveIndicator}><span>✓</span><span>Auto-saved {formatTime(lastSaved)}</span></div>}
+
+          <div style={styles.content}>
+            {activeTab === 'home' && (
+              <>
+                <div style={styles.budgetCard}>
+                  <div style={styles.circleContainer}>
+                    <svg width="200" height="200" viewBox="0 0 200 200">
+                      <circle cx="100" cy="100" r="85" fill="none" stroke="#e5e7eb" strokeWidth="12"/>
+                      <circle cx="100" cy="100" r="85" fill="none" stroke={statusColor} strokeWidth="12" strokeLinecap="round"
+                        strokeDasharray={`${Math.max(Math.min(percentRemaining, 100), 0) * 5.34} 534`}
+                        transform="rotate(-90 100 100)" style={{ transition: 'stroke-dasharray 0.5s ease, stroke 0.3s ease' }}/>
+                    </svg>
+                    <div style={styles.circleContent}>
+                      <p style={styles.remainingLabel}>Remaining</p>
+                      <p style={{...styles.remainingAmount, color: remaining < 0 ? '#ef4444' : '#1f2937'}}>${Math.abs(remaining).toFixed(2)}</p>
+                      <p style={{...styles.statusLabel, color: statusColor}}>{getStatusLabel()}</p>
+                    </div>
+                    <button onClick={() => setShowAddExpense(true)} style={{...styles.addButton, background: statusColor, boxShadow: `0 4px 12px ${statusColor}66`}}>
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5"><path d="M12 5v14M5 12h14"/></svg>
+                    </button>
+                  </div>
+                  <div style={{...styles.percentBadge, background: statusColor + '20', color: statusColor}}>{Math.round(percentRemaining)}% remaining</div>
+                  <div style={styles.summaryRow}>
+                    <div style={styles.summaryItem}><span style={styles.summaryDot}></span><span style={styles.summaryLabel}>Budget</span><span style={styles.summaryValue}>${currentWeekData.budget?.toFixed(2) || '0.00'}</span></div>
+                    <div style={styles.summaryItem}><span style={{...styles.summaryDot, background: statusColor}}></span><span style={styles.summaryLabel}>Spent</span><span style={styles.summaryValue}>${totalSpent.toFixed(2)}</span></div>
+                  </div>
+                </div>
+
+                {categoryTotals.length > 0 && (
+                  <div style={styles.categoryCard}>
+                    <h3 style={styles.sectionTitle}>Spending by Category</h3>
+                    <div style={styles.categoryGrid}>
+                      {categoryTotals.map(cat => (
+                        <div key={cat.id} style={styles.categoryItem}>
+                          <div style={{...styles.categoryCircle, borderColor: cat.color, background: `conic-gradient(${cat.color} ${cat.percent * 3.6}deg, #f3f4f6 0deg)`}}>
+                            <div style={styles.categoryInner}><span style={styles.categoryPercent}>{cat.percent}%</span></div>
+                          </div>
+                          <p style={styles.categoryName}>{cat.name}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div style={styles.chartCard}>
+                  <h3 style={styles.sectionTitle}>Daily Spending (Fri–Thu)</h3>
+                  <div style={styles.chartContainer}>
+                    {getDayExpenses().map((day, i) => (
+                      <div key={i} style={styles.barWrapper}>
+                        <div style={styles.barContainer}>
+                          <div style={{...styles.bar, height: `${Math.max(day.height, 4)}%`, background: day.isToday ? statusColor : statusColor + '40'}}/>
+                        </div>
+                        <span style={{...styles.barLabel, fontWeight: day.isToday ? '600' : '400', color: day.isToday ? statusColor : '#9ca3af'}}>{day.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+
+            {activeTab === 'spending' && (
+              <div style={styles.spendingTab}>
+                <h3 style={styles.sectionTitle}>Expenses for {formatDateShort(currentWeekStart)} – {formatDateShort(currentWeekEnd)}</h3>
+                {currentWeekData.expenses.length === 0 ? (
+                  <div style={styles.emptyState}><p>No expenses this week</p><p style={styles.emptyHint}>Tap + to add an expense</p></div>
+                ) : (
+                  <div style={styles.expenseList}>
+                    {[...currentWeekData.expenses].reverse().map(expense => {
+                      const cat = CATEGORIES.find(c => c.id === expense.category);
+                      const expenseDate = new Date(expense.createdAt || expense.date);
+                      return (
+                        <div key={expense.id} style={styles.expenseItem}>
+                          <div style={{...styles.expenseIcon, background: cat?.color + '20'}}><span>{cat?.icon}</span></div>
+                          <div style={styles.expenseInfo}>
+                            <p style={styles.expenseName}>{expense.name}</p>
+                            <p style={styles.expenseCategory}>{cat?.name}</p>
+                            <p style={styles.expenseTimestamp}>{formatDateTime(expenseDate)}</p>
+                          </div>
+                          <div style={styles.expenseRight}>
+                            <p style={styles.expenseAmount}>-${expense.amount.toFixed(2)}</p>
+                            <button onClick={() => handleDeleteExpense(expense.id)} style={styles.deleteBtn}>✕</button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div style={styles.bottomNav}>
+            {[{ id: 'home', icon: '🏠', label: 'Home' }, { id: 'spending', icon: '📊', label: 'Spending' }].map(tab => (
+              <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{...styles.navItem, color: activeTab === tab.id ? statusColor : '#9ca3af'}}>
+                <span style={styles.navIcon}>{tab.icon}</span>
+                <span style={styles.navLabel}>{tab.label}</span>
+              </button>
+            ))}
+          </div>
+
+          {showAddExpense && (
+            <div style={styles.modalOverlay} onClick={() => setShowAddExpense(false)}>
+              <div style={styles.modal} onClick={e => e.stopPropagation()}>
+                <div style={styles.modalHeader}>
+                  <h3 style={styles.modalTitle}>Add Expense</h3>
+                  <button onClick={() => setShowAddExpense(false)} style={styles.closeBtn}>✕</button>
+                </div>
+                <div style={styles.timestampPreview}><span>🕐</span><span>Recording at {formatDateTime(currentTime)}</span></div>
+                <div style={styles.modalContent}>
+                  <div style={styles.inputGroup}>
+                    <label style={styles.label}>Amount</label>
+                    <div style={styles.amountInput}>
+                      <span style={styles.amountDollar}>$</span>
+                      <input type="number" value={expenseAmount} onChange={(e) => setExpenseAmount(e.target.value)} placeholder="0.00" style={styles.amountField} />
+                    </div>
+                  </div>
+                  <div style={styles.inputGroup}>
+                    <label style={styles.label}>Description</label>
+                    <input type="text" value={expenseName} onChange={(e) => setExpenseName(e.target.value)} placeholder="What did you spend on?" style={styles.textInput} />
+                  </div>
+                  <div style={styles.inputGroup}>
+                    <label style={styles.label}>Category</label>
+                    <div style={styles.categoryPicker}>
+                      {CATEGORIES.map(cat => (
+                        <button key={cat.id} onClick={() => setSelectedCategory(cat.id)}
+                          style={{...styles.categoryOption, background: selectedCategory === cat.id ? cat.color + '20' : '#f9fafb', borderColor: selectedCategory === cat.id ? cat.color : '#e5e7eb'}}>
+                          <span>{cat.icon}</span>
+                          <span style={styles.categoryOptionName}>{cat.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <button onClick={handleAddExpense} style={{...styles.addExpenseBtn, background: statusColor}}>Add Expense</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showWeekManager && (
+            <div style={styles.modalOverlay} onClick={() => setShowWeekManager(false)}>
+              <div style={styles.modal} onClick={e => e.stopPropagation()}>
+                <div style={styles.modalHeader}>
+                  <h3 style={styles.modalTitle}>Manage Data</h3>
+                  <button onClick={() => setShowWeekManager(false)} style={styles.closeBtn}>✕</button>
+                </div>
+                <div style={styles.modalContent}>
+                  <div style={styles.storageStats}>
+                    <div style={styles.storageStat}><span style={styles.storageStatValue}>{getAllWeeksWithData()}</span><span style={styles.storageStatLabel}>Weeks</span></div>
+                    <div style={styles.storageStat}><span style={styles.storageStatValue}>{getTotalExpensesCount()}</span><span style={styles.storageStatLabel}>Transactions</span></div>
+                  </div>
+                  <div style={styles.managerSection}>
+                    <h4 style={styles.managerSectionTitle}>Current Week</h4>
+                    <div style={styles.managerWeekCard}>
+                      <div>
+                        <p style={styles.managerWeekDates}>{formatDateFull(currentWeekStart)} – {formatDateFull(currentWeekEnd)}</p>
+                        <p style={styles.managerWeekBudget}>Budget: ${currentWeekData.budget?.toFixed(2) || '0.00'} • {currentWeekData.expenses.length} expenses</p>
+                      </div>
+                      <button onClick={() => { handleClearCurrentWeek(); setShowWeekManager(false); }} style={styles.clearBtn}>Clear</button>
+                    </div>
+                  </div>
+                  <div style={styles.managerSection}>
+                    <h4 style={styles.managerSectionTitle}>Update Budget</h4>
+                    <div style={styles.editBudgetRow}>
+                      <div style={styles.editBudgetInput}>
+                        <span style={styles.editDollar}>$</span>
+                        <input type="number" value={budgetInput} onChange={(e) => setBudgetInput(e.target.value)} placeholder={currentWeekData.budget?.toString() || '0'} style={styles.editField} />
+                      </div>
+                      <button onClick={() => { handleSetBudget(); setShowWeekManager(false); }} style={styles.updateBtn}>Update</button>
+                    </div>
+                  </div>
+                  {getFutureWeeks().length > 0 && (
+                    <div style={styles.managerSection}>
+                      <h4 style={styles.managerSectionTitle}>Future Weeks</h4>
+                      <div style={styles.futureWeeksList}>
+                        {getFutureWeeks().map(week => (
+                          <div key={week.key} style={styles.futureWeekRow}>
+                            <div>
+                              <p style={styles.futureWeekRowDates}>{formatDateShort(week.start)} – {formatDateShort(week.end)}</p>
+                              <p style={styles.futureWeekRowBudget}>${week.budget.toFixed(2)}</p>
+                            </div>
+                            <div style={styles.futureWeekActions}>
+                              <button onClick={() => { setCurrentWeekStart(week.start); setShowWeekManager(false); }} style={styles.viewBtn}>View</button>
+                              <button onClick={() => handleDeleteWeek(week.key)} style={styles.deleteWeekBtnSmall}>Delete</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div style={styles.dangerZone}>
+                    <h4 style={styles.dangerTitle}>⚠️ Danger Zone</h4>
+                    <p style={styles.dangerText}>Permanently delete all data.</p>
+                    <button onClick={handleClearAllData} style={styles.dangerBtn}>Delete All Data</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    const styles = {
+      loadingContainer: { minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#f9fafb' },
+      loadingSpinner: { width: 40, height: 40, border: '3px solid #e5e7eb', borderTopColor: '#84cc16', borderRadius: '50%', animation: 'spin 1s linear infinite' },
+      loadingText: { marginTop: 16, color: '#6b7280', fontSize: 14 },
+      setupContainer: { minHeight: '100vh', background: 'linear-gradient(180deg, #f0fdf4 0%, #fff 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 },
+      setupContent: { width: '100%', maxWidth: 360, textAlign: 'center' },
+      currentTimeDisplay: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, marginBottom: 20, padding: 12, background: 'white', borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.05)' },
+      currentTimeIcon: { fontSize: 20 },
+      currentTimeText: { fontSize: 14, color: '#374151', fontWeight: 500 },
+      currentTimeClock: { fontSize: 24, fontWeight: 700, color: '#84cc16' },
+      weekNavSetup: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, background: 'white', borderRadius: 16, padding: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.05)' },
+      navArrowBtn: { width: 40, height: 40, border: 'none', background: '#f3f4f6', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' },
+      weekNavCenter: { display: 'flex', flexDirection: 'column', alignItems: 'center' },
+      weekNavLabel: { fontSize: 12, fontWeight: 600, color: '#84cc16', textTransform: 'uppercase' },
+      weekNavDates: { fontSize: 14, color: '#374151', fontWeight: 500 },
+      setupIcon: { width: 80, height: 80, background: '#ecfccb', borderRadius: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px', fontSize: 40 },
+      setupTitle: { fontSize: 28, fontWeight: 700, color: '#1f2937', margin: '0 0 8px' },
+      setupSubtitle: { fontSize: 16, color: '#6b7280', margin: '0 0 16px' },
+      weekBadgeSetup: { display: 'inline-flex', alignItems: 'center', gap: 8, background: '#f3f4f6', padding: '10px 16px', borderRadius: 12, fontSize: 14, color: '#374151', marginBottom: 24 },
+      inputWrapper: { position: 'relative', marginBottom: 24 },
+      dollarSign: { position: 'absolute', left: 20, top: '50%', transform: 'translateY(-50%)', fontSize: 28, color: '#9ca3af' },
+      budgetInput: { width: '100%', padding: '20px 20px 20px 48px', fontSize: 32, fontWeight: 600, border: '2px solid #e5e7eb', borderRadius: 16, outline: 'none', textAlign: 'center', boxSizing: 'border-box' },
+      startButton: { width: '100%', padding: 18, background: '#84cc16', color: 'white', fontSize: 18, fontWeight: 600, border: 'none', borderRadius: 16, cursor: 'pointer' },
+      payDayNote: { fontSize: 14, color: '#9ca3af', marginTop: 16 },
+      goTodayBtnSetup: { background: 'none', border: 'none', color: '#84cc16', fontSize: 14, fontWeight: 600, cursor: 'pointer', marginTop: 12 },
+      dataStats: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 16, fontSize: 13, color: '#6b7280' },
+      futureWeeksSection: { marginTop: 32, textAlign: 'left', background: 'white', borderRadius: 16, padding: 16 },
+      futureWeeksTitle: { fontSize: 14, fontWeight: 600, color: '#374151', margin: '0 0 12px' },
+      futureWeekItem: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 12, background: '#f9fafb', borderRadius: 12, marginBottom: 8 },
+      futureWeekInfo: { display: 'flex', flexDirection: 'column', gap: 2 },
+      futureWeekDates: { fontSize: 14, color: '#374151', fontWeight: 500 },
+      futureWeekBudget: { fontSize: 13, color: '#84cc16', fontWeight: 600 },
+      deleteWeekBtn: { background: '#fef2f2', border: 'none', color: '#ef4444', width: 32, height: 32, borderRadius: 8, cursor: 'pointer', fontSize: 14 },
+      container: { minHeight: '100vh', background: '#f9fafb', paddingBottom: 80 },
+      header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', background: 'white' },
+      headerLabel: { fontSize: 13, fontWeight: 600, margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: 0.5 },
+      headerTitle: { fontSize: 24, fontWeight: 700, color: '#1f2937', margin: 0 },
+      headerRight: { display: 'flex', alignItems: 'center', gap: 12 },
+      liveTime: { padding: '6px 10px', background: '#f3f4f6', borderRadius: 8 },
+      liveTimeClock: { fontSize: 13, fontWeight: 600, color: '#374151' },
+      settingsBtn: { width: 40, height: 40, border: 'none', background: '#f3f4f6', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#6b7280' },
+      weekBanner: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'white', borderBottom: '1px solid #f3f4f6' },
+      weekNavBtn: { width: 36, height: 36, border: 'none', background: '#f3f4f6', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#6b7280' },
+      weekBannerCenter: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 },
+      weekBannerText: { fontSize: 14, color: '#374151', fontWeight: 500 },
+      goTodayBtn: { background: '#ecfccb', border: 'none', color: '#84cc16', fontSize: 12, fontWeight: 600, padding: '4px 10px', borderRadius: 6, cursor: 'pointer' },
+      saveIndicator: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: 8, background: '#ecfccb', fontSize: 12, color: '#65a30d', fontWeight: 500 },
+      content: { padding: 16 },
+      budgetCard: { background: 'white', borderRadius: 24, padding: 24, marginBottom: 16, boxShadow: '0 1px 3px rgba(0,0,0,0.05)', textAlign: 'center' },
+      circleContainer: { position: 'relative', display: 'flex', justifyContent: 'center', marginBottom: 16 },
+      circleContent: { position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center' },
+      remainingLabel: { fontSize: 14, color: '#9ca3af', margin: '0 0 4px' },
+      remainingAmount: { fontSize: 36, fontWeight: 700, margin: 0 },
+      statusLabel: { fontSize: 13, fontWeight: 600, margin: '4px 0 0' },
+      addButton: { position: 'absolute', right: 20, top: '50%', transform: 'translateY(-50%)', width: 48, height: 48, border: 'none', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' },
+      percentBadge: { display: 'inline-block', padding: '6px 12px', borderRadius: 20, fontSize: 13, fontWeight: 600, marginBottom: 16 },
+      summaryRow: { display: 'flex', justifyContent: 'center', gap: 32 },
+      summaryItem: { display: 'flex', alignItems: 'center', gap: 8 },
+      summaryDot: { width: 10, height: 10, borderRadius: '50%', background: '#e5e7eb' },
+      summaryLabel: { fontSize: 14, color: '#9ca3af' },
+      summaryValue: { fontSize: 14, fontWeight: 600, color: '#1f2937' },
+      categoryCard: { background: 'white', borderRadius: 24, padding: 20, marginBottom: 16, boxShadow: '0 1px 3px rgba(0,0,0,0.05)' },
+      sectionTitle: { fontSize: 16, fontWeight: 600, color: '#1f2937', margin: '0 0 16px' },
+      categoryGrid: { display: 'flex', flexWrap: 'wrap', gap: 16, justifyContent: 'center' },
+      categoryItem: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 },
+      categoryCircle: { width: 56, height: 56, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '3px solid' },
+      categoryInner: { width: 44, height: 44, background: 'white', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+      categoryPercent: { fontSize: 12, fontWeight: 600, color: '#374151' },
+      categoryName: { fontSize: 12, color: '#6b7280', margin: 0 },
+      chartCard: { background: 'white', borderRadius: 24, padding: 20, boxShadow: '0 1px 3px rgba(0,0,0,0.05)' },
+      chartContainer: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', height: 120 },
+      barWrapper: { display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1 },
+      barContainer: { width: 24, height: 100, background: '#f3f4f6', borderRadius: 12, display: 'flex', alignItems: 'flex-end', overflow: 'hidden', marginBottom: 8 },
+      bar: { width: '100%', borderRadius: 12, transition: 'height 0.3s ease' },
+      barLabel: { fontSize: 12 },
+      spendingTab: { background: 'white', borderRadius: 24, padding: 20, minHeight: 400 },
+      emptyState: { textAlign: 'center', padding: '60px 20px', color: '#9ca3af' },
+      emptyHint: { fontSize: 14, marginTop: 8 },
+      expenseList: { display: 'flex', flexDirection: 'column', gap: 12 },
+      expenseItem: { display: 'flex', alignItems: 'center', gap: 12, padding: 12, background: '#f9fafb', borderRadius: 16 },
+      expenseIcon: { width: 44, height: 44, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20 },
+      expenseInfo: { flex: 1 },
+      expenseName: { fontSize: 15, fontWeight: 500, color: '#1f2937', margin: 0 },
+      expenseCategory: { fontSize: 13, color: '#6b7280', margin: '2px 0 0' },
+      expenseTimestamp: { fontSize: 11, color: '#9ca3af', margin: '2px 0 0' },
+      expenseRight: { display: 'flex', alignItems: 'center', gap: 12 },
+      expenseAmount: { fontSize: 15, fontWeight: 600, color: '#1f2937', margin: 0 },
+      deleteBtn: { background: 'none', border: 'none', color: '#d1d5db', fontSize: 16, cursor: 'pointer', padding: 4 },
+      bottomNav: { position: 'fixed', bottom: 0, left: 0, right: 0, display: 'flex', justifyContent: 'space-around', background: 'white', padding: '12px 0 24px', borderTop: '1px solid #f3f4f6' },
+      navItem: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, background: 'none', border: 'none', cursor: 'pointer', padding: '8px 24px' },
+      navIcon: { fontSize: 24 },
+      navLabel: { fontSize: 12, fontWeight: 500 },
+      modalOverlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end', zIndex: 100 },
+      modal: { width: '100%', background: 'white', borderRadius: '24px 24px 0 0', maxHeight: '90vh', overflow: 'auto' },
+      modalHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 20, borderBottom: '1px solid #f3f4f6' },
+      modalTitle: { fontSize: 18, fontWeight: 600, margin: 0 },
+      closeBtn: { background: 'none', border: 'none', fontSize: 20, color: '#9ca3af', cursor: 'pointer' },
+      timestampPreview: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 12, background: '#f0fdf4', fontSize: 13, color: '#65a30d', fontWeight: 500 },
+      modalContent: { padding: 20 },
+      inputGroup: { marginBottom: 20 },
+      label: { display: 'block', fontSize: 14, fontWeight: 500, color: '#374151', marginBottom: 8 },
+      amountInput: { display: 'flex', alignItems: 'center', background: '#f9fafb', borderRadius: 16, padding: '0 16px' },
+      amountDollar: { fontSize: 24, color: '#9ca3af' },
+      amountField: { flex: 1, border: 'none', background: 'none', padding: 16, fontSize: 24, fontWeight: 600, outline: 'none' },
+      textInput: { width: '100%', padding: 16, fontSize: 16, border: 'none', background: '#f9fafb', borderRadius: 16, outline: 'none', boxSizing: 'border-box' },
+      categoryPicker: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 },
+      categoryOption: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '12px 8px', border: '2px solid', borderRadius: 12, cursor: 'pointer' },
+      categoryOptionName: { fontSize: 11, fontWeight: 500 },
+      addExpenseBtn: { width: '100%', padding: 18, color: 'white', fontSize: 16, fontWeight: 600, border: 'none', borderRadius: 16, cursor: 'pointer', marginTop: 8 },
+      storageStats: { display: 'flex', justifyContent: 'space-around', padding: 20, background: '#f0fdf4', borderRadius: 16, marginBottom: 24 },
+      storageStat: { display: 'flex', flexDirection: 'column', alignItems: 'center' },
+      storageStatValue: { fontSize: 28, fontWeight: 700, color: '#84cc16' },
+      storageStatLabel: { fontSize: 12, color: '#6b7280' },
+      managerSection: { marginBottom: 24 },
+      managerSectionTitle: { fontSize: 14, fontWeight: 600, color: '#6b7280', margin: '0 0 12px', textTransform: 'uppercase', letterSpacing: 0.5 },
+      managerWeekCard: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 16, background: '#f9fafb', borderRadius: 16 },
+      managerWeekDates: { fontSize: 15, fontWeight: 500, color: '#1f2937', margin: '0 0 4px' },
+      managerWeekBudget: { fontSize: 13, color: '#6b7280', margin: 0 },
+      clearBtn: { background: '#fef2f2', border: 'none', color: '#ef4444', fontSize: 13, fontWeight: 600, padding: '8px 12px', borderRadius: 8, cursor: 'pointer' },
+      editBudgetRow: { display: 'flex', gap: 12 },
+      editBudgetInput: { flex: 1, display: 'flex', alignItems: 'center', background: '#f9fafb', borderRadius: 12, padding: '0 12px' },
+      editDollar: { fontSize: 18, color: '#9ca3af' },
+      editField: { flex: 1, border: 'none', background: 'none', padding: 12, fontSize: 18, fontWeight: 600, outline: 'none' },
+      updateBtn: { background: '#84cc16', border: 'none', color: 'white', fontSize: 14, fontWeight: 600, padding: '12px 20px', borderRadius: 12, cursor: 'pointer' },
+      futureWeeksList: { display: 'flex', flexDirection: 'column', gap: 8 },
+      futureWeekRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: '#f9fafb', borderRadius: 12 },
+      futureWeekRowDates: { fontSize: 14, fontWeight: 500, color: '#1f2937', margin: '0 0 2px' },
+      futureWeekRowBudget: { fontSize: 13, color: '#84cc16', fontWeight: 600, margin: 0 },
+      futureWeekActions: { display: 'flex', gap: 8 },
+      viewBtn: { background: '#f3f4f6', border: 'none', color: '#374151', fontSize: 12, fontWeight: 600, padding: '6px 12px', borderRadius: 6, cursor: 'pointer' },
+      deleteWeekBtnSmall: { background: '#fef2f2', border: 'none', color: '#ef4444', fontSize: 12, fontWeight: 600, padding: '6px 12px', borderRadius: 6, cursor: 'pointer' },
+      dangerZone: { marginTop: 24, padding: 16, background: '#fef2f2', borderRadius: 16, border: '1px solid #fecaca' },
+      dangerTitle: { fontSize: 14, fontWeight: 600, color: '#dc2626', margin: '0 0 8px' },
+      dangerText: { fontSize: 13, color: '#7f1d1d', margin: '0 0 12px' },
+      dangerBtn: { width: '100%', padding: 12, background: '#ef4444', color: 'white', fontSize: 14, fontWeight: 600, border: 'none', borderRadius: 10, cursor: 'pointer' },
+    };
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<BudgetTracker />);
+  </script>
+</body>
+</html>
